@@ -41,17 +41,17 @@ class Stereo:
         self.disparity_signs = {'DLNR_Middlebury': -1, 'DLNR_SceneFlow': -1}
 
         if "DLNR" in self.model_name:
-            DLNR_args = Namespace(corr_implementation='reg', 
-                                  corr_levels=4, 
-                                  corr_radius=4, 
-                                  dataset='things', 
-                                  hidden_dims=[128, 128, 128], 
-                                  mixed_precision=True, 
-                                  n_downsample=2, 
-                                  n_gru_layers=3, 
+            DLNR_args = Namespace(corr_implementation='reg',
+                                  corr_levels=4,
+                                  corr_radius=4,
+                                  dataset='things',
+                                  hidden_dims=[128, 128, 128],
+                                  mixed_precision=True,
+                                  n_downsample=2,
+                                  n_gru_layers=3,
                                   restore_ckpt=os.path.join(self.base_dir, 'third_party', 'DLNR', 'pretrained', f'{self.model_name}.pth'),
-                                  shared_backbone=False, 
-                                  slow_fast_gru=False, 
+                                  shared_backbone=False,
+                                  slow_fast_gru=False,
                                   valid_iters=10)
             DLNR_model = torch.nn.DataParallel(DLNR(DLNR_args), device_ids=[0])
             DLNR_model.load_state_dict(torch.load(DLNR_args.restore_ckpt))
@@ -78,7 +78,7 @@ class Stereo:
         img = np.array(Image.open(imfile)).astype(np.uint8)
         img = torch.from_numpy(img).permute(2, 0, 1).float()
         return img[None].to(self.device)
-    
+
     def run(self, start=0, visualize=False):
         """
         Run the stereo model: render a pair of images and compute the disparity and depth using the stereo model.
@@ -98,7 +98,7 @@ class Stereo:
                 baseline = self.renderer.baseline
                 output_dir = self.renderer.render_folder_name(camera_number)
                 self.renderer.render_image_pair(camera_number, visualize=False)
-                
+
                 image1 = self.load_image(os.path.join(output_dir, 'left.png'))
                 image2 = self.load_image(os.path.join(output_dir, 'right.png'))
 
@@ -112,40 +112,66 @@ class Stereo:
                     elif direction == 'RL':
                         image1_to_model = torch.flip(image2, dims=[3])
                         image2_to_model = torch.flip(image1, dims=[3])
-                    
-                    prev_flow, flow_up = self.model(image1_to_model, image2_to_model, iters=self.model_args.valid_iters, test_mode=True, flow_init=prev_flows[direction] if self.args.stereo_warm else None)
+
+                    prev_flow, flow_up, confidence = self.model(image1_to_model, image2_to_model, iters=self.model_args.valid_iters, test_mode=True, flow_init=prev_flows[direction] if self.args.stereo_warm else None)
+
+                    # <<< Add Debug Check and Handling (as before) >>>
+                    if confidence is None:
+                        print(f"!!! Warning: Confidence map is None for direction {direction}")
+                        _, _, H_out, W_out = flow_up.shape
+                        confidence = torch.ones(1, 1, H_out, W_out, device=self.device)
+                    elif torch.isnan(confidence).any():
+                        print(f"!!! Warning: NaN detected in returned confidence map for direction {direction}! Mean: {torch.nanmean(confidence).item()}")
+                        confidence = torch.nan_to_num(confidence, nan=0.0)
+                    elif torch.isinf(confidence).any():
+                        print(f"!!! Warning: Inf detected in returned confidence map for direction {direction}!")
+                        confidence = torch.nan_to_num(confidence, posinf=0.0, neginf=0.0)
+
+                    print(f"Confidence (after check) - Mean: {confidence.mean().item():.4f}, Min: {confidence.min().item():.4f}, Max: {confidence.max().item():.4f}")
+                    # <<< End Debug Check >>>
+
                     if direction == 'RL':
                         prev_flow = torch.flip(prev_flow, dims=[3])
                         flow_up = torch.flip(flow_up, dims=[3])
+                        confidence = torch.flip(confidence, dims=[3])
                     flow_up = padder.unpad(flow_up).squeeze()
-                    
+                    confidence = padder.unpad(confidence) # <<< Unpad confidence >>>
+
                     prev_flows[direction] = prev_flow
-                    
+
                     disparities[direction] = self.disparity_signs[self.model_name] * flow_up.detach().cpu().numpy().squeeze()
-                    
+                    confidence_map_np = confidence.detach().cpu().numpy().squeeze() # <<< Get confidence as numpy array >>>
+
                     output_directory = os.path.join(output_dir, f'out_{self.model_name}')
                     os.makedirs(output_directory, exist_ok=True)
-                    
+
                     np.save(os.path.join(output_directory, f"disparity_{direction}.npy"), disparities[direction])
                     plt.imsave(os.path.join(output_directory, f"disparity_{direction}.png"), disparities[direction], cmap='jet')
-                        
+
+                    # <<< Save and Visualize Confidence Map >>>
+                    np.save(os.path.join(output_directory, f"confidence_{direction}.npy"), confidence_map_np)
+                    # Use a grayscale colormap (viridis, gray, plasma, magma are good choices)
+                    # vmin=0, vmax=1 ensures consistent visualization range
+                    cv2.imwrite(os.path.join(output_directory, f"confidence_{direction}.png"), cv2.applyColorMap((np.clip(confidence_map_np, 0.0, 1.0) * 255).astype(np.uint8), cv2.COLORMAP_VIRIDIS))
+                    # <<< End Save and Visualize >>>
+
                 occlusion_mask = self.get_occlusion_mask(disparities['LR'], disparities['RL'], self.args.stereo_occlusion_threshold)
                 depth = (left_camera['fx'] * baseline) / (disparities['LR'])
-                
+
                 np.save(os.path.join(output_directory, "occlusion_mask.npy"), occlusion_mask)
                 plt.imsave(os.path.join(output_directory, "occlusion_mask.png"), occlusion_mask)
                 np.save(os.path.join(output_directory, "depth.npy"), depth)
-                cv2.imwrite(os.path.join(output_directory, 'depth.png'), depth)            
+                cv2.imwrite(os.path.join(output_directory, 'depth.png'), depth)
                 shading = get_shading(depth, self.args.stereo_shading_eps)
                 cv2.imwrite(os.path.join(output_directory, 'shading.png'), shading)
-                
+
                 if visualize:
                     print(f"baseline: {baseline}")
                     print(f"minimal depth: {depth.min()}, maximal depth: {depth.max()}")
                     self.view_results_single(camera_number)
 
                 torch.cuda.empty_cache()
-                
+
     def get_occlusion_mask(self, L2R_disparity, R2L_disparity, occlusion_threshold):
         """
         Calculate the occlusion mask given a pair of disparities.
@@ -159,23 +185,23 @@ class Stereo:
         np.ndarray: Binary occlusion mask where 0 indicates occluded pixels and 1 indicates visible pixels.
         """
         height, width = L2R_disparity.shape
-    
+
         x_grid, y_grid = np.meshgrid(np.arange(width), np.arange(height))
-        
+
         x_projected = (x_grid - L2R_disparity).astype(np.int32)
         x_projected_clipped = np.clip(x_projected, 0, width - 1)
-        
+
         x_reprojected = x_projected_clipped + R2L_disparity[y_grid, x_projected_clipped]
         x_reprojected_clipped = np.clip(x_reprojected, 0, width - 1)
-        
+
         disparity_difference = np.abs(x_grid - x_reprojected_clipped)
-    
+
         occlusion_mask = (disparity_difference > occlusion_threshold).astype(np.uint8)
-        
+
         occlusion_mask[(x_projected < 0) | (x_projected >= width)] = 1
 
         occlusion_mask = occlusion_mask > 0.5
-        
+
         return ~occlusion_mask
 
     def view_results_single(self, camera_number):
@@ -208,9 +234,9 @@ class Stereo:
                 images[path_name] = Image.fromarray(np.random.randint(0, 255, (self.renderer.left_cameras[0]['height'], self.renderer.left_cameras[0]['width'], 3), dtype=np.uint8))
 
         images['lr_img'] = Image.blend(images['left_img'], images['right_img'], alpha=0.5)
-        
+
         images_list = [images[key] for key in ['lr_img', 'object_mask', 'disparity', 'occlusion_mask', 'shading']]
-        
+
         widths, heights = zip(*(i.size for i in images_list))
         total_width = sum(widths)
         max_height = max(heights)
@@ -224,7 +250,7 @@ class Stereo:
                 disparity_min = np.array(im).min()
                 disparity_max = np.array(im).max()
         concatenated_image = new_im
-        
+
         factor = 0.25
         smaller_image = concatenated_image.resize((int(total_width * factor), int(max_height * factor)))
 

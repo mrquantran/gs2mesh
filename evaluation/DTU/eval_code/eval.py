@@ -69,7 +69,6 @@ if __name__ == '__main__':
 
         new_pts = np.concatenate(new_pts, axis=0)
         data_pcd = np.concatenate([vertices, new_pts], axis=0)
-    
     elif args.mode == 'pcd':
         pbar = tqdm(total=8)
         pbar.set_description('read data pcd')
@@ -116,22 +115,50 @@ if __name__ == '__main__':
 
     pbar.update(1)
     pbar.set_description('compute data2stl')
-    nn_engine.fit(stl)
-    dist_d2s, idx_d2s = nn_engine.kneighbors(data_in_obs, n_neighbors=1, return_distance=True)
+    # Define max_dist here so it's available in all code paths
     max_dist = args.max_dist
-    mean_d2s = dist_d2s[dist_d2s < max_dist].mean()
 
-    pbar.update(1)
-    pbar.set_description('compute stl2data')
-    ground_plane = loadmat(f'{args.dataset_dir}/ObsMask/Plane{args.scan}.mat')['P']
+    above = np.zeros(stl.shape[0], dtype=np.bool_)
 
-    stl_hom = np.concatenate([stl, np.ones_like(stl[:,:1])], -1)
-    above = (ground_plane.reshape((1,4)) * stl_hom).sum(-1) > 0
-    stl_above = stl[above]
+    # Check if stl point cloud or data_in_obs is empty
+    if stl.shape[0] == 0 or data_in_obs.shape[0] == 0:
+        print(f"Warning: STL point cloud or observable data is empty for scan {args.scan}!")
+        # Set default values for metrics that can't be computed
+        mean_d2s = float('inf')  # Use infinity to indicate invalid measurement
+        dist_d2s = np.ones((max(data_in_obs.shape[0], 1), 1)) * float('inf')  # For visualization
+        stl_above = np.zeros((0, 3))  # Empty array with correct shape
+        dist_s2d = np.zeros((0, 1))  # Empty array for distance
+        mean_s2d = float('inf')
+        over_all = float('inf')
+    else:
+        nn_engine.fit(stl)
+        dist_d2s, idx_d2s = nn_engine.kneighbors(data_in_obs, n_neighbors=1, return_distance=True)
+        # max_dist is now already defined above
+        mean_d2s = dist_d2s[dist_d2s < max_dist].mean() if np.any(dist_d2s < max_dist) else float('inf')
 
-    nn_engine.fit(data_in)
-    dist_s2d, idx_s2d = nn_engine.kneighbors(stl_above, n_neighbors=1, return_distance=True)
-    mean_s2d = dist_s2d[dist_s2d < max_dist].mean()
+        pbar.update(1)
+        pbar.set_description('compute stl2data')
+        ground_plane = loadmat(f'{args.dataset_dir}/ObsMask/Plane{args.scan}.mat')['P']
+
+        stl_hom = np.concatenate([stl, np.ones_like(stl[:,:1])], -1)
+        above = (ground_plane.reshape((1,4)) * stl_hom).sum(-1) > 0
+        stl_above = stl[above]
+
+        if stl_above.shape[0] == 0 or data_in.shape[0] == 0:
+            print(f"Warning: No points above ground or no input data for scan {args.scan}!")
+            dist_s2d = np.zeros((0, 1))
+            mean_s2d = float('inf')
+            over_all = float('inf') if mean_d2s == float('inf') else mean_d2s
+        else:
+            nn_engine.fit(data_in)
+            dist_s2d, idx_s2d = nn_engine.kneighbors(stl_above, n_neighbors=1, return_distance=True)
+            mean_s2d = dist_s2d[dist_s2d < max_dist].mean() if np.any(dist_s2d < max_dist) else float('inf')
+
+            # Calculate overall only if both metrics are valid
+            if mean_d2s == float('inf') or mean_s2d == float('inf'):
+                over_all = float('inf')
+            else:
+                over_all = (mean_d2s + mean_s2d) / 2
 
     pbar.update(1)
     pbar.set_description('visualize error')
@@ -156,7 +183,7 @@ if __name__ == '__main__':
     pbar.close()
     over_all = (mean_d2s + mean_s2d) / 2
     print(mean_d2s, mean_s2d, over_all)
-    
+
     import json
     with open(f'{args.vis_out_dir}/results.json', 'w') as fp:
         json.dump({
