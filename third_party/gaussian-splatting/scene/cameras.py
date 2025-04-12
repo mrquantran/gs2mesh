@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -17,7 +17,7 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", K=None, 
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", K=None,
                  sky_mask=None, normal=None, depth=None
                  ):
         super(Camera, self).__init__()
@@ -49,9 +49,10 @@ class Camera(nn.Module):
         else:
             self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
 
-        self.K = torch.tensor([[K[0], 0, K[2]],
-                               [0, K[1], K[3]],
-                               [0, 0, 1]]).to(self.data_device).to(torch.float32)
+        if K is not None:
+            self.K = torch.tensor([[K[0], 0, K[2]],
+                                [0, K[1], K[3]],
+                                [0, 0, 1]]).to(self.data_device).to(torch.float32)
 
         self.zfar = 100.0
         self.znear = 0.01
@@ -67,7 +68,7 @@ class Camera(nn.Module):
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
         self.image_width = width
-        self.image_height = height    
+        self.image_height = height
         self.FoVy = fovy
         self.FoVx = fovx
         self.znear = znear

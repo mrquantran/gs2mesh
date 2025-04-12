@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -43,16 +43,17 @@ def loadCam(args, id, cam_info, resolution_scale):
         K = cam_info.K / scale
 
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
-    if cam_info.sky_mask is not None:
-        resized_sky_mask = torch.tensor(cv2.resize(cam_info.sky_mask, resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
-    else:
-        resized_sky_mask = None
+    # if cam_info.sky_mask is not None:
+    #     resized_sky_mask = torch.tensor(cv2.resize(cam_info.sky_mask, resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
+    # else:
+    #     resized_sky_mask = None
+    resized_sky_mask = None
     if cam_info.normal is not None:
         resized_normal = torch.tensor(cv2.resize(cam_info.normal.transpose((1, 2, 0)), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
         resized_normal = resized_normal.permute((2, 0, 1))
     else:
         resized_normal = None
-    
+
     if cam_info.depth is not None:
         resized_depth = torch.tensor(cv2.resize(cam_info.depth.squeeze(), resolution, interpolation=cv2.INTER_NEAREST)).to(resized_image_rgb.device)
     else:
@@ -64,10 +65,10 @@ def loadCam(args, id, cam_info, resolution_scale):
     if resized_image_rgb.shape[1] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
-    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
-                  FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
+    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T,
+                  FoVx=cam_info.FovX, FoVy=cam_info.FovY,
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, K=K, 
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, K=K,
                   sky_mask=resized_sky_mask, normal=resized_normal, depth=resized_depth)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
