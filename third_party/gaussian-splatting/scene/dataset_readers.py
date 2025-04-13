@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -23,6 +23,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 import open3d as o3d
+import torch  # Add torch import for loading .pt files
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -107,11 +108,18 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_seg=Fal
 
         # #sky mask
         if sky_seg:
-            sky_path = image_path.replace("images", "mask")[:-4]+".npy"
-            sky_mask = np.load(sky_path).astype(np.uint8)
+            # Extract filename without extension
+            filename = os.path.basename(image_path).split('.')[0]
+            # Remove leading zero if present to match mask filename format
+            if filename.startswith('0') and len(filename) > 1:
+                filename = filename[1:]
+            # Construct mask path
+            mask_dir = os.path.dirname(image_path).replace("images", "mask")
+            sky_path = os.path.join(mask_dir, filename + ".png")
+            sky_mask = np.array(Image.open(sky_path)).astype(np.uint8)
         else:
             sky_mask = None
-            
+
         if load_normal:
             normal_path = image_path.replace("images", "normals")[:-4]+".npy"
             normal = np.load(normal_path).astype(np.float32)
@@ -121,13 +129,15 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_seg=Fal
 
         if load_depth:
             # depth_path = image_path.replace("images", "monodepth")[:-4]+".npy"
-            depth_path = image_path.replace("images", "metricdepth")[:-4]+".npy"
-            depth = np.load(depth_path).astype(np.float32)
+            depth_path = image_path.replace("images", "depths")[:-4]+".pt"
+            depth_data = torch.load(depth_path, map_location=torch.device('cpu'))
+            depth_tensor = depth_data['depth']
+            depth = depth_tensor.astype(np.float32)
         else:
             depth = None
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height, 
+                              image_path=image_path, image_name=image_name, width=width, height=height,
                               K=intr.params, sky_mask=sky_mask, normal=normal, depth=depth)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -147,7 +157,7 @@ def storePly(path, xyz, rgb):
     dtype = [('x', 'f4'), ('y', 'f4'), ('z', 'f4'),
             ('nx', 'f4'), ('ny', 'f4'), ('nz', 'f4'),
             ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
-    
+
     normals = np.zeros_like(xyz)
 
     elements = np.empty(xyz.shape[0], dtype=dtype)
@@ -173,7 +183,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, sky_seg=False, load_norm
 
     reading_dir = "images" if images == None else images
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), 
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
                                            sky_seg=sky_seg, load_normal=load_normal, load_depth=load_depth)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
@@ -258,13 +268,13 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
                 normal = np.zeros_like(image).transpose(2, 0, 1)
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
-            FovY = fovy 
+            FovY = fovy
             FovX = fovx
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1], 
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1],
                             K=np.array([1, 2, 3, 4]), sky_mask=sky_mask, normal=normal))
-            
+
     return cam_infos
 
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
@@ -272,7 +282,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
     print("Reading Test Transforms")
     test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension, is_train=False)
-    
+
     if not eval:
         train_cam_infos.extend(test_cam_infos)
         test_cam_infos = []
@@ -284,7 +294,7 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
         # Since this data set has no colmap data, we start with random points
         num_pts = 100_000
         print(f"Generating random point cloud ({num_pts})...")
-        
+
         # We create random points inside the bounds of the synthetic Blender scenes
         xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
         shs = np.random.random((num_pts, 3)) / 255.0
