@@ -33,6 +33,7 @@ namespace BACKWARD
 		const uint32_t* n_contrib,
 		const float* dL_dpixels,
 		float3* dL_dmean2D,
+		float3* dL_dmean2D_densify,
 		float4* dL_dconic2D,
 		float* dL_dopacity,
 		float* dL_dcolors);

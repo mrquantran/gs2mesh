@@ -55,11 +55,28 @@ namespace FORWARD
 		int W, int H,
 		const float2* points_xy_image,
 		const float* features,
+		const float* depths,
 		const float4* conic_opacity,
 		float* final_T,
 		uint32_t* n_contrib,
 		const float* bg_color,
-		float* out_color);
+		float* out_color,
+		float* out_depth);
+	void filter_preprocess(int P, int M,
+		const float* means3D,
+		const glm::vec3* scales,
+		const float scale_modifier,
+		const glm::vec4* rotations,
+		const float* cov3D_precomp,
+		const float* viewmatrix,
+		const float* projmatrix,
+		const int W, int H,
+		const float focal_x, float focal_y,
+		const float tan_fovx, float tan_fovy,
+		int* radii,
+		float* cov3Ds,
+		const dim3 grid,
+		bool prefiltered);
 }
 
 

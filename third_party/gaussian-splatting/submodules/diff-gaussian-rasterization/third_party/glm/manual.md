@@ -1,6 +1,6 @@
 ![Alt](./doc/manual/logo-mini.png "GLM Logo")
 
-# GLM 0.9.9 Manual
+# GLM 1.0.0 Manual
 
 ![Alt](./doc/manual/g-truc.png "G-Truc Logo")
 
@@ -180,7 +180,7 @@ GLM is a header-only library, and thus does not need to be compiled. We can use 
 #include <glm/glm.hpp>
 ```
 
-To extend the feature set supported by GLM and keeping the library as close to GLSL as possible, new features are implemented as extensions that can be included thought a separated header:
+To extend the feature set supported by GLM and keeping the library as close to GLSL as possible, new features are implemented as extensions that can be included through a separate header:
 
 ```cpp
 // Include all GLM core / GLSL features
@@ -239,7 +239,8 @@ The following is a code sample using separated core headers and an extension:
 #include <glm/trigonometric.hpp>  //radians
 
 // Include GLM extension
-#include <glm/ext/matrix_transform.hpp> // perspective, translate, rotate
+#include <glm/ext/matrix_transform.hpp>     // translate, rotate
+#include <glm/ext/matrix_clip_space.hpp>    // perspective
 
 glm::mat4 transform(glm::vec2 const& Orientation, glm::vec3 const& Translate, glm::vec3 const& Up)
 {
@@ -264,7 +265,8 @@ Using GLM through split headers to minimize the project build time:
 
 // Include GLM matrix extensions:
 #include <glm/ext/matrix_float4x4.hpp>              // mat4
-#include <glm/ext/matrix_transform.hpp>             // perspective, translate, rotate
+#include <glm/ext/matrix_transform.hpp>             // translate, rotate
+#include <glm/ext/matrix_clip_space.hpp>            // perspective
 
 glm::mat4 transform(glm::vec2 const& Orientation, glm::vec3 const& Translate, glm::vec3 const& Up)
 {
@@ -749,9 +751,9 @@ int average(int const A, int const B)
 When using /W4 on Visual C++ or -Wpedantic on GCC, for example, the compilers will generate warnings for using C++ language extensions (/Za with Visual C++) such as anonymous struct.
 GLM relies on anonymous structs for swizzle operators and aligned vector types. To silent those warnings define `GLM_FORCE_SILENT_WARNINGS` before including GLM headers.
 
-### <a name="section2_21"></a> 2.21. GLM\_FORCE\_QUAT\_DATA\_WXYZ: Force GLM to store quat data as w,x,y,z instead of x,y,z,w
+### <a name="section2_21"></a> 2.21. GLM\_FORCE\_QUAT\_DATA\_XYZW: Force GLM to store quat data as x,y,z,w instead of w,x,y,z
 
-By default GLM store quaternion components with the x, y, z, w order. `GLM_FORCE_QUAT_DATA_WXYZ` allows switching the quaternion data storage to the w, x, y, z order.
+By default GLM stores quaternion components with the w, x, y, z order. `GLM_FORCE_QUAT_DATA_XYZW` allows switching the quaternion data storage to the x, y, z, w order.
 
 ---
 <div style="page-break-after: always;"> </div>
