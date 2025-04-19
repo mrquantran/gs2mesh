@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -40,11 +40,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
-    
+
     #read the overlapping txt
     if opt.dataset == '360' and opt.depth_loss:
         pairs = load_pairs_relation(opt.pair_path)
-    
+
     gaussians.training_setup(opt)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -68,7 +68,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     for i in range(0, len(viewpoint_stack), 1):
         propagation_dict[viewpoint_stack[i].image_name] = False
 
-    for iteration in range(first_iter, opt.iterations + 1):        
+    for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -99,7 +99,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # if iteration > propagated_iteration_begin and iteration < propagated_iteration_after and after_propagated:
         #     randidx = propagated_view_index
         viewpoint_cam = viewpoint_stack[randidx]
-        
+
         if opt.depth_loss:
             if opt.dataset == '360':
                 src_idxs = pairs[randidx]
@@ -119,7 +119,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # if opt.depth_loss and iteration > propagated_iteration_begin and iteration < propagated_iteration_after and (iteration % opt.propagation_interval == 0):
                 propagation_dict[viewpoint_cam.image_name] = True
 
-                render_pkg = render(viewpoint_cam, gaussians, pipe, bg, 
+                render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
                             return_normal=opt.normal_loss, return_opacity=False, return_depth=opt.depth_loss or opt.depth2normal_loss)
 
                 projected_depth = render_pkg["render_depth"]
@@ -140,7 +140,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 #transform normal to camera coordinate
                 R_w2c = torch.tensor(viewpoint_cam.R.T).cuda().to(torch.float32)
                 # R_w2c[:, 1:] *= -1
-                normal = (R_w2c @ normal.view(-1, 3).permute(1, 0)).view(3, viewpoint_cam.image_height, viewpoint_cam.image_width)                
+                normal = (R_w2c @ normal.view(-1, 3).permute(1, 0)).view(3, viewpoint_cam.image_height, viewpoint_cam.image_width)
                 valid_mask = propagated_depth != 300
 
                 # calculate the abs rel depth error of the propagated depth and rendered depth & render color error
@@ -159,7 +159,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 ref_K = viewpoint_cam.K
                 #c2w
                 ref_pose = viewpoint_cam.world_view_transform.transpose(0, 1).inverse()
-                
+
                 # calculate the geometric consistency
                 geometric_counts = None
                 for idx, src_idx in enumerate(src_idxs):
@@ -169,42 +169,42 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     src_K = src_viewpoint.K
 
                     if src_viewpoint.depth is None:
-                        src_render_pkg = render(src_viewpoint, gaussians, pipe, bg, 
+                        src_render_pkg = render(src_viewpoint, gaussians, pipe, bg,
                                 return_normal=opt.normal_loss, return_opacity=False, return_depth=opt.depth_loss or opt.depth2normal_loss)
                         src_projected_depth = src_render_pkg['render_depth']
-                    
+
                     #get the src_depth first
                         src_depth, src_normal = depth_propagation(src_viewpoint, src_projected_depth, viewpoint_stack, src_idxs, opt.dataset, opt.patch_size)
                         src_viewpoint.depth = src_depth
                     else:
                         src_depth = src_viewpoint.depth
-                        
-                    mask, depth_reprojected, x2d_src, y2d_src, relative_depth_diff = check_geometric_consistency(propagated_depth.unsqueeze(0), ref_K.unsqueeze(0), 
-                                                                                                                 ref_pose.unsqueeze(0), src_depth.unsqueeze(0), 
+
+                    mask, depth_reprojected, x2d_src, y2d_src, relative_depth_diff = check_geometric_consistency(propagated_depth.unsqueeze(0), ref_K.unsqueeze(0),
+                                                                                                                 ref_pose.unsqueeze(0), src_depth.unsqueeze(0),
                                                                                                                  src_K.unsqueeze(0), src_pose.unsqueeze(0), thre1=2, thre2=0.01)
-                    
+
                     if geometric_counts is None:
                         geometric_counts = mask.to(torch.uint8)
                     else:
                         geometric_counts += mask.to(torch.uint8)
-                        
+
                 cost = geometric_counts.squeeze()
-                cost_mask = cost >= 2       
-                
+                cost_mask = cost >= 2
+
                 normal[~(cost_mask.unsqueeze(0).repeat(3, 1, 1))] = -10
                 viewpoint_cam.normal = normal
-                
+
                 propagated_mask = valid_mask & error_mask & cost_mask
                 if sky_mask is not None:
                     propagated_mask = propagated_mask & sky_mask
 
-                propagated_depth[~cost_mask] = 300 
+                propagated_depth[~cost_mask] = 300
                 # propagated_mask = propagated_mask & edge_mask
                 propagated_depth[~propagated_mask] = 300
-  
+
                 if propagated_mask.sum() > 100:
-                    gaussians.densify_from_depth_propagation(viewpoint_cam, propagated_depth, propagated_mask.to(torch.bool), gt_image) 
-                
+                    gaussians.densify_from_depth_propagation(viewpoint_cam, propagated_depth, propagated_mask.to(torch.bool), gt_image)
+
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
@@ -212,7 +212,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         #render_pkg = render(viewpoint_cam, gaussians, pipe, bg, return_normal=args.normal_loss)
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, 
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg,
                             return_normal=opt.normal_loss, return_opacity=True, return_depth=opt.depth_loss or opt.depth2normal_loss)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
@@ -287,7 +287,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
-                
+
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
@@ -300,14 +300,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args):
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
-        
+
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
@@ -331,7 +331,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()},
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         for config in validation_configs:
@@ -348,7 +348,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
@@ -372,12 +372,12 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 2000, 7000, 20000, 50000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[1, 7000, 20000, 50000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
+    parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[50, 100, 250, 500, 1000, 2000, 5000, 10000, 15000, 20000, 25000, 30000])
     parser.add_argument("--start_checkpoint", type=str, default = None)
-    
+
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-    
+
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
