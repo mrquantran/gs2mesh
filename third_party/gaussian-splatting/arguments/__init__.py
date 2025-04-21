@@ -39,7 +39,11 @@ class ParamGroup:
 
     def extract(self, args):
         group = GroupParams()
-        for arg in vars(args).items():
+        d = vars(args)
+        if 'no_load_depth' not in d:
+            d['no_load_depth'] = False
+
+        for arg in d.items():
             if arg[0] in vars(self) or ("_" + arg[0]) in vars(self):
                 setattr(group, arg[0], arg[1])
         return group
@@ -53,7 +57,32 @@ class ModelParams(ParamGroup):
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
+        self.no_load_depth = False
         self.eval = False
+
+        # Pearson Depth Loss
+        self.lambda_local_pearson = 0.0
+        self.lambda_pearson = 0.0
+        self.box_p = 128
+        self.p_corr = 0.5
+
+        # Floater Pruning 
+        self.prune_exp = 7.0 # lower is less aggresive
+        self.prune_perc = 0.98 # higher is less aggresive
+        
+        self.densify_lag = 1000000
+        self.power_thresh = -4.0
+        self.densify_period = 5000
+
+        # Diffusion Params
+        self.step_ratio = 0.95
+        self.lambda_diffusion = 0.0
+        self.SDS_freq = 0.1
+
+        # Warp Reg parms
+        self.lambda_reg = 0.0
+        self.warp_reg_start_itr = 4999
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -66,6 +95,7 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        self.beta = 5.0
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -84,9 +114,10 @@ class OptimizationParams(ParamGroup):
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500
-        self.densify_until_iter = 15_000
+        self.densify_until_iter = 18_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+    
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

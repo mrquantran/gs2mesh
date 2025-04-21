@@ -266,11 +266,20 @@ renderCUDA(
 	int W, int H,
 	const float2* __restrict__ points_xy_image,
 	const float* __restrict__ features,
+	const float* __restrict__ depths,
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ final_T,
 	uint32_t* __restrict__ n_contrib,
 	const float* __restrict__ bg_color,
-	float* __restrict__ out_color)
+	float* __restrict__ out_color,
+	float* __restrict__ out_depth,
+	float* __restrict__ out_weight,
+	float* __restrict__ out_depth_weight,
+	float* __restrict__ alpha_depth,
+	int* __restrict__ num_gauss,
+	int* __restrict__ mode_id,
+	float* __restrict__ modes,
+	float beta_k)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -298,9 +307,19 @@ renderCUDA(
 
 	// Initialize helper variables
 	float T = 1.0f;
+	float prev_depp = 0.0f;
 	uint32_t contributor = 0;
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
+	float D = { 0 };
+	float AD = { 0 };
+	float Z = { 0 };
+	int _num_gauss = 0;
+	float topW = 0;
+	int endIdx = -1;
+	int startIdx = -1;
+	float topD = 0;
+	float AZ = { 0 };
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -353,9 +372,27 @@ renderCUDA(
 			// Eq. (3) from 3D Gaussian splatting paper.
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
+			float depp = depths[collected_id[j]];
+			float w = alpha*T;
+			D += depp*w*exp(beta_k*(w-0.3f));
+			Z += w*exp(beta_k*(w-0.3f));
+			AD += depp * w;
+			AZ += w;
 
+			
+
+			if(startIdx == -1)
+				startIdx = range.x + progress;
+			
+			if (w > topW){
+				topW = w;
+				endIdx = range.x + progress;
+				topD = depp;
+			}
+
+			//D += depp * alpha * T;
 			T = test_T;
-
+			_num_gauss++;
 			// Keep track of last range entry to update this
 			// pixel.
 			last_contributor = contributor;
@@ -370,8 +407,23 @@ renderCUDA(
 		n_contrib[pix_id] = last_contributor;
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
+
+		if (Z == 0.0f)
+			Z = 1.0f;
+		if (AZ == 0.0f)
+			AZ = 1.0f;
+		out_depth[pix_id] = log(D / Z + 1e-8f);
+		out_weight[pix_id] = Z;
+		out_depth_weight[pix_id] = D;
+		alpha_depth[pix_id] = AD/(AZ + 1e-8f);
+		num_gauss[pix_id] = _num_gauss;
+		mode_id[pix_id] = startIdx;
+		mode_id[H*W + pix_id] = endIdx;
+		modes[pix_id] = topD;
 	}
 }
+
+
 
 void FORWARD::render(
 	const dim3 grid, dim3 block,
@@ -380,11 +432,20 @@ void FORWARD::render(
 	int W, int H,
 	const float2* means2D,
 	const float* colors,
+	const float* depths,
 	const float4* conic_opacity,
 	float* final_T,
 	uint32_t* n_contrib,
 	const float* bg_color,
-	float* out_color)
+	float* out_color,
+	float* out_depth,
+	float* out_weight,
+	float* out_depth_weight,
+	float* alpha_depth,
+	int* num_gauss,
+	int* mode_id,
+	float* modes,
+	const float beta_k)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -392,11 +453,20 @@ void FORWARD::render(
 		W, H,
 		means2D,
 		colors,
+		depths,
 		conic_opacity,
 		final_T,
 		n_contrib,
 		bg_color,
-		out_color);
+		out_color,
+		out_depth,
+		out_weight,
+		out_depth_weight,
+		alpha_depth,
+		num_gauss,
+		mode_id,
+		modes,
+		beta_k);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

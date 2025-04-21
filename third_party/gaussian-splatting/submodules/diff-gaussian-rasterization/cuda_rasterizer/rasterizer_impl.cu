@@ -216,7 +216,19 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
+	float* out_depth,
+	float* out_weight,
+	float* out_depth_weight,
+	int* point_list,
+	float* out_means2D,
+	float* out_conic_opacity,
+	int* num_gauss,
+	int* mode_id,
+	float* modes,
+	float* alpha_depth,
+	bool ret_pts,
 	int* radii,
+	float beta_k,
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
@@ -272,6 +284,7 @@ int CudaRasterizer::Rasterizer::forward(
 		prefiltered
 	), debug)
 
+	
 	// Compute prefix sum over full list of touched tile counts by Gaussians
 	// E.g., [2, 3, 0, 2, 1] -> [2, 5, 5, 7, 8]
 	CHECK_CUDA(cub::DeviceScan::InclusiveSum(geomState.scanning_space, geomState.scan_size, geomState.tiles_touched, geomState.point_offsets, P), debug)
@@ -279,6 +292,7 @@ int CudaRasterizer::Rasterizer::forward(
 	// Retrieve total number of Gaussian instances to launch and resize aux buffers
 	int num_rendered;
 	CHECK_CUDA(cudaMemcpy(&num_rendered, geomState.point_offsets + P - 1, sizeof(int), cudaMemcpyDeviceToHost), debug);
+	//printf("Num rendered: %d\n", num_rendered);
 
 	size_t binning_chunk_size = required<BinningState>(num_rendered);
 	char* binning_chunkptr = binningBuffer(binning_chunk_size);
@@ -319,6 +333,7 @@ int CudaRasterizer::Rasterizer::forward(
 
 	// Let each tile blend its range of Gaussians independently in parallel
 	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+	
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -326,12 +341,31 @@ int CudaRasterizer::Rasterizer::forward(
 		width, height,
 		geomState.means2D,
 		feature_ptr,
+		geomState.depths,
 		geomState.conic_opacity,
 		imgState.accum_alpha,
 		imgState.n_contrib,
 		background,
-		out_color), debug)
+		out_color,
+		out_depth,
+		out_weight,
+		out_depth_weight,
+		alpha_depth,
+		num_gauss,
+		mode_id,
+		modes, 
+		beta_k), debug)
 
+	//print the first element of geomState.means2D
+	
+	if(ret_pts){
+		cudaMemcpy(point_list, binningState.point_list, num_rendered * sizeof(int), cudaMemcpyDeviceToDevice);
+		cudaMemcpy(out_means2D, geomState.means2D, P * sizeof(float2), cudaMemcpyDeviceToDevice);
+		cudaMemcpy(out_conic_opacity, geomState.conic_opacity, P * sizeof(float4), cudaMemcpyDeviceToDevice);
+	}
+
+	//printf("geomState.means2D[0] = %f, %f\n", geomState.means2D[0].x, geomState.means2D[0].y);
+	
 	return num_rendered;
 }
 
@@ -357,6 +391,11 @@ void CudaRasterizer::Rasterizer::backward(
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
+	const float* dL_depths,
+	const int* num_gauss,
+	const float* avg_depth,
+	const float* weight,
+	const float* depth_weight,
 	float* dL_dmean2D,
 	float* dL_dconic,
 	float* dL_dopacity,
@@ -366,6 +405,9 @@ void CudaRasterizer::Rasterizer::backward(
 	float* dL_dsh,
 	float* dL_dscale,
 	float* dL_drot,
+	float* dL_dz,
+	float* vars,
+	const float beta_k,
 	bool debug)
 {
 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
@@ -387,6 +429,7 @@ void CudaRasterizer::Rasterizer::backward(
 	// opacity and RGB of Gaussians from per-pixel loss gradients.
 	// If we were given precomputed colors and not SHs, use them.
 	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
+	const float* depth_ptr = geomState.depths;
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,
 		block,
@@ -397,13 +440,22 @@ void CudaRasterizer::Rasterizer::backward(
 		geomState.means2D,
 		geomState.conic_opacity,
 		color_ptr,
+		depth_ptr,
 		imgState.accum_alpha,
 		imgState.n_contrib,
+		num_gauss,
+		avg_depth,
+		weight,
+		depth_weight,
 		dL_dpix,
+		dL_depths,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
 		dL_dopacity,
-		dL_dcolor), debug)
+		dL_dcolor,
+		dL_dz,
+		vars, 
+		beta_k), debug)
 
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
@@ -430,5 +482,6 @@ void CudaRasterizer::Rasterizer::backward(
 		dL_dcov3D,
 		dL_dsh,
 		(glm::vec3*)dL_dscale,
-		(glm::vec4*)dL_drot), debug)
+		(glm::vec4*)dL_drot,
+		dL_dz), debug)
 }

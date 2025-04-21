@@ -120,6 +120,13 @@ class GaussianModel:
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+    
+    def mark_red(self, mask):
+        #print(self._features_dc.shape)
+        #print(self._features_rest.shape)
+        self._features_dc[mask, :, :] = RGB2SH(torch.tensor([1.0, 0.0, 0.0]).float().cuda())
+        self._features_rest[mask, :, 0] = 0.0
+        self._opacity[mask, :]  = 1 
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -269,6 +276,10 @@ class GaussianModel:
 
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
+    
+    def move_points(self, new_xyz):
+        optimizable_tensors = self.replace_tensor_to_optimizer(new_xyz, "xyz")
+        self._xyz = optimizable_tensors["xyz"]
 
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}

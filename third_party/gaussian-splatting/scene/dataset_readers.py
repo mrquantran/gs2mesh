@@ -22,6 +22,9 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
+from recordclass import recordclass, RecordClass
+
+
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -30,6 +33,7 @@ class CameraInfo(NamedTuple):
     FovY: np.array
     FovX: np.array
     image: np.array
+    depth: np.array
     image_path: str
     image_name: str
     width: int
@@ -39,6 +43,7 @@ class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
     train_cameras: list
     test_cameras: list
+    hold_cameras: list
     nerf_normalization: dict
     ply_path: str
 
@@ -65,9 +70,29 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, step=1, max_cameras=None, load_depth=True):
     cam_infos = []
-    for idx, key in enumerate(cam_extrinsics):
+    holdout_infos = []
+    # print(cam_extrinsics)
+    if max_cameras is not None:
+        keys = list(cam_extrinsics.keys())
+        subkeys = []
+        N = len(keys)
+
+        j = 0
+        holdout = list(range(N))
+        for i in range(max_cameras):
+            j += step
+            subkeys.append(keys[j%N])
+            holdout.remove(j%N)
+            #subkeys.append(keys[j%N])
+            print('Reading Key ', str(j%N))
+        holdout = [keys[i] for i in holdout]
+    else:
+        subkeys = cam_extrinsics
+        holdout = []
+    # print(subkeys)        
+    for idx, key in enumerate(subkeys):
         sys.stdout.write('\r')
         # the exact output you're looking for:
         sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
@@ -98,11 +123,57 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         image_name = os.path.basename(image_path).split(".")[0]
         image = Image.open(image_path)
 
-        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+        depth = None
+        if load_depth:
+            depth_path = os.path.join(os.path.dirname(images_folder), 'depths', image_name+'.npy')
+            depth= np.load(depth_path)
+
+
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
                               image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)
-    sys.stdout.write('\n')
-    return cam_infos
+    
+
+    for idx, key in enumerate(holdout):
+        sys.stdout.write('\r')
+        # the exact output you're looking for:
+        sys.stdout.write("Holdout camera {}/{}".format(idx+1, len(cam_extrinsics)))
+        sys.stdout.flush()
+
+        extr = cam_extrinsics[key]
+        intr = cam_intrinsics[extr.camera_id]
+        height = intr.height
+        width = intr.width
+
+        uid = intr.id
+        R = np.transpose(qvec2rotmat(extr.qvec))
+        T = np.array(extr.tvec)
+
+        if intr.model=="SIMPLE_PINHOLE":
+            focal_length_x = intr.params[0]
+            FovY = focal2fov(focal_length_x, height)
+            FovX = focal2fov(focal_length_x, width)
+        elif intr.model=="PINHOLE":
+            focal_length_x = intr.params[0]
+            focal_length_y = intr.params[1]
+            FovY = focal2fov(focal_length_y, height)
+            FovX = focal2fov(focal_length_x, width)
+        else:
+            assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+
+        image_path = os.path.join(images_folder, os.path.basename(extr.name))
+        image_name = os.path.basename(image_path).split(".")[0]
+        image = Image.open(image_path)
+
+        depth_path = os.path.join(os.path.dirname(images_folder), 'depths', image_name+'.npy')
+        depth= np.load(depth_path)
+
+
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, depth=depth,
+                            image_path=image_path, image_name=image_name, width=width, height=height)
+        holdout_infos.append(cam_info)
+        sys.stdout.write('\n')
+    return cam_infos, holdout_infos
 
 def fetchPly(path):
     plydata = PlyData.read(path)
@@ -129,21 +200,22 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8):
+def readColmapSceneInfo(path, images, eval, llffhold=8, step=1, max_cameras=None, load_depth=True):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
-    except:
+    except Exception as e:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos_unsorted, holdout_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), step=step, max_cameras=max_cameras, load_depth=load_depth)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    holdout_infos = sorted(holdout_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
@@ -172,6 +244,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
                            test_cameras=test_cam_infos,
+                           hold_cameras=holdout_infos,
                            nerf_normalization=nerf_normalization,
                            ply_path=ply_path)
     return scene_info
