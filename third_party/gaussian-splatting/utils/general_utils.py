@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -22,6 +22,22 @@ def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
 def NP_resize(image, resolution):
+    # Debug: print shapes for debugging
+    print("Input image shape:", image.shape if image is not None else None)
+    print("Target resolution:", resolution)
+
+    # Check if the image and resolution are valid
+    if image is None:
+        raise ValueError("Input image is None")
+
+    if not isinstance(resolution, tuple) and not (isinstance(resolution, list) and len(resolution) == 2):
+        raise ValueError(f"Resolution should be a tuple or list with 2 elements, got {resolution}")
+
+    # Check if the resolution values are valid (positive integers)
+    if not all(isinstance(dim, int) and dim > 0 for dim in resolution):
+        raise ValueError(f"Resolution dimensions must be positive integers, got {resolution}")
+
+    # Proceed with resize if everything is valid
     resized_image = cv2.resize(image, resolution, interpolation=cv2.INTER_CUBIC)
     return resized_image
 

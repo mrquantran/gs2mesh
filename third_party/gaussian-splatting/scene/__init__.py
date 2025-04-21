@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -80,7 +80,7 @@ class Scene:
             self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args)
             print("Loading Test Cameras")
             self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args)
-            transform, center, up, low, high, z_low, z_high, ts, t_thetas = setup_ellipse_sampling(self.train_cameras[resolution_scale])       
+            transform, center, up, low, high, z_low, z_high, ts, t_thetas = setup_ellipse_sampling(self.train_cameras[resolution_scale])
             self.ellipse_params[resolution_scale] = {"transform": transform, "center": center, "up": up, "low": low, "high": high, "z_low": z_low, "z_high": z_high, "ts": ts, "t_thetas": t_thetas}
             if mode != 'eval':
             # # Rotate around average up vector
@@ -94,7 +94,7 @@ class Scene:
                 R_matrices = np.stack(R_list)
                 T_vectors = np.stack(T_list)
                 avg_up_vector = calculate_average_up_vector(R_matrices)
-                
+
                 cam_focal_dict = dict()
                 for i in json_cams:
                     cam_focal_dict[i['id']] = (i['fx'],i['fy'])
@@ -113,9 +113,9 @@ class Scene:
 
 
 
-            
 
-        
+
+
         cam_centers = [x.camera_center for x in self.train_cameras[1.0]]
         cam_centers = torch.stack(cam_centers)
         gaussians.avg_cam_center = torch.mean(cam_centers, dim=0)
@@ -137,17 +137,17 @@ class Scene:
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
-    
+
     def getFtCameras(self, scale=1.0):
         return self.ft_cameras[scale]
-    
+
     def getRandEllipsePose(self, pose_idx, std, scale=1.0, z_variation=0.0):
         params = self.ellipse_params[scale]
         transform, center, up, low, high, z_low, z_high, ts, t_thetas = params["transform"], params["center"], params["up"], params["low"], params["high"], params["z_low"], params["z_high"], params["ts"], params["t_thetas"]
-        
+
         theta_view = t_thetas[pose_idx]
-        
-        if std <= 0:    
+
+        if std <= 0:
             z_rand = np.random.uniform(z_low[2], z_high[2])
             theta = np.random.uniform(0, 2*np.pi)
         else:

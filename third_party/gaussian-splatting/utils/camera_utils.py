@@ -3,7 +3,7 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
@@ -42,11 +42,8 @@ def loadCam(args, id, cam_info, resolution_scale):
 
     resized_image_rgb = PILtoTorch(cam_info.image, resolution)
     # ================================= Resize depth map ==========================================================
-    resized_depth = None
-    if cam_info.depth is not None:
-        resized_depth = NP_resize(cam_info.depth, resolution)
-        resized_depth = torch.Tensor((resized_depth - resized_depth.min())/(resized_depth.max() - resized_depth.min())).cuda()
-    # =============================================================================================================
+    resized_depth = cam_info.depth
+    resized_depth = torch.Tensor(resized_depth).cuda()
 
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None
@@ -54,7 +51,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     if resized_image_rgb.shape[1] == 4:
         loaded_mask = resized_image_rgb[3:4, ...]
 
-    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
+    return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T,
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, warp_mask = None,
                   image=gt_image, depth=resized_depth, gt_alpha_mask=loaded_mask, K=None, src_R=None, src_T=None,src_uid = id,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device)
@@ -91,7 +88,7 @@ def camera_to_JSON(id, camera : Camera):
     return camera_entry
 
 # def depth_warping(img, depth_map, K, R_A, T_A, R_B, T_B,  rendered_depth_min, rendered_depth_max):
-#     ''' 
+#     '''
 #     img: src image
 #     K: Intrinsics
 #     R_A, T_A: Extrinsics matrix of the src image
@@ -121,7 +118,7 @@ def camera_to_JSON(id, camera : Camera):
 
 #     R_AB = R_B @ np.linalg.inv(R_A)
 #     T_AB = T_B - (R_AB @ T_A)
-    
+
 #     K_inv = np.linalg.inv(K)
 #     height, width = img.shape[:2]
 #     warp_mask = np.zeros((height, width), dtype=np.double)
@@ -134,7 +131,7 @@ def camera_to_JSON(id, camera : Camera):
 #             # Convert to COLMAP coordinate system
 #             xy_normalized = K_inv @ xy_homog
 
-#             # Backproject to 3D 
+#             # Backproject to 3D
 #             P_A = Z * xy_normalized
 
 #             # A-B Transformation matrix
@@ -146,7 +143,7 @@ def camera_to_JSON(id, camera : Camera):
 #             # Normalize to get the pixel coordinates
 #             x_b, y_b = (xy_b_homog / xy_b_homog[2])[:2]
 #             x_b, y_b = int(round(x_b)), int(round(y_b))
-            
+
 #             # Check bounds
 #             if 0 <= x_b < width and 0 <= y_b < height:
 #                 warped_img[y_b, x_b] = img[y, x]
