@@ -22,10 +22,6 @@ def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
 def NP_resize(image, resolution):
-    # Debug: print shapes for debugging
-    print("Input image shape:", image.shape if image is not None else None)
-    print("Target resolution:", resolution)
-
     # Check if the image and resolution are valid
     if image is None:
         raise ValueError("Input image is None")
