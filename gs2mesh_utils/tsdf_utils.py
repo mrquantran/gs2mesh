@@ -36,7 +36,7 @@ class TSDF:
         self.out_name = out_name
         self.args = args
 
-    def run(self, visualize=False):
+    def run(self, visualize=True):
         """
         Run the TSDF fusion algorithm.
 
@@ -49,7 +49,7 @@ class TSDF:
         valid = self.args.TSDF_valid if  self.args.TSDF_valid is not None else list(range(len(self.renderer)))
         skip =  self.args.TSDF_skip if  self.args.TSDF_skip is not None else []
         voxel_length= self.args.TSDF_voxel/512
-        
+
         volume = o3d.pipelines.integration.ScalableTSDFVolume(
             voxel_length=float(voxel_length),
             sdf_trunc= self.args.TSDF_sdf_trunc,
@@ -93,16 +93,17 @@ class TSDF:
             rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_o3d, depth_o3d, depth_scale= self.args.TSDF_scale, depth_trunc=depth_trunc, convert_rgb_to_intensity=False)
 
             if visualize:
-                fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-                axes[0].imshow(rgbd_image.color)
-                axes[0].set_title('Color Image')
-                axes[0].axis('off')
-                axes[1].imshow(rgbd_image.depth)
-                axes[1].set_title('Depth Image')
-                axes[1].axis('off')
-                plt.show()
+                # Save color image
+                color_img = np.asarray(rgbd_image.color)
+                plt.imsave(os.path.join(output_dir, f'out_{self.model_name}', 'color_debug.png'), color_img)
+
+                # Save depth image (normalize for visualization)
+                depth_img = np.asarray(rgbd_image.depth)
+                norm_depth = cv2.normalize(depth_img, None, 0, 255, cv2.NORM_MINMAX)
+                norm_depth = norm_depth.astype(np.uint8)
+                plt.imsave(os.path.join(output_dir, f'out_{self.model_name}', 'depth_debug.png'), norm_depth, cmap='gray')
                 print(f"minimal depth: {np.asarray(rgbd_image.depth)[np.asarray(rgbd_image.depth) != 0].min()}, maximal depth: {np.asarray(rgbd_image.depth).max()}")
-            
+
             intrinsics = o3d.camera.PinholeCameraIntrinsic(left_camera['width'], left_camera['height'], left_camera['fx'], left_camera['fy'], left_camera['cx'], left_camera['cy'])
             volume.integrate(rgbd_image, intrinsics, np.linalg.inv(extrinsic_matrix))
         self.mesh = volume.extract_triangle_mesh()
@@ -128,7 +129,7 @@ class TSDF:
         """
 
         thres =  self.args.TSDF_cleaning_threshold/ self.args.TSDF_scale
-        
+
         with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
             triangle_clusters, cluster_n_triangles, cluster_area = (self.mesh.cluster_connected_triangles())
         triangle_clusters = np.asarray(triangle_clusters)

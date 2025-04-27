@@ -115,20 +115,20 @@ class Stereo:
 
                     prev_flow, flow_up, confidence = self.model(image1_to_model, image2_to_model, iters=self.model_args.valid_iters, test_mode=True, flow_init=prev_flows[direction] if self.args.stereo_warm else None)
 
-                    # <<< Add Debug Check and Handling (as before) >>>
-                    if confidence is None:
-                        print(f"!!! Warning: Confidence map is None for direction {direction}")
-                        _, _, H_out, W_out = flow_up.shape
-                        confidence = torch.ones(1, 1, H_out, W_out, device=self.device)
-                    elif torch.isnan(confidence).any():
-                        print(f"!!! Warning: NaN detected in returned confidence map for direction {direction}! Mean: {torch.nanmean(confidence).item()}")
-                        confidence = torch.nan_to_num(confidence, nan=0.0)
-                    elif torch.isinf(confidence).any():
-                        print(f"!!! Warning: Inf detected in returned confidence map for direction {direction}!")
-                        confidence = torch.nan_to_num(confidence, posinf=0.0, neginf=0.0)
+                    # # <<< Add Debug Check and Handling (as before) >>>
+                    # if confidence is None:
+                    #     print(f"!!! Warning: Confidence map is None for direction {direction}")
+                    #     _, _, H_out, W_out = flow_up.shape
+                    #     confidence = torch.ones(1, 1, H_out, W_out, device=self.device)
+                    # elif torch.isnan(confidence).any():
+                    #     print(f"!!! Warning: NaN detected in returned confidence map for direction {direction}! Mean: {torch.nanmean(confidence).item()}")
+                    #     confidence = torch.nan_to_num(confidence, nan=0.0)
+                    # elif torch.isinf(confidence).any():
+                    #     print(f"!!! Warning: Inf detected in returned confidence map for direction {direction}!")
+                    #     confidence = torch.nan_to_num(confidence, posinf=0.0, neginf=0.0)
 
-                    print(f"Confidence (after check) - Mean: {confidence.mean().item():.4f}, Min: {confidence.min().item():.4f}, Max: {confidence.max().item():.4f}")
-                    # <<< End Debug Check >>>
+                    # print(f"Confidence (after check) - Mean: {confidence.mean().item():.4f}, Min: {confidence.min().item():.4f}, Max: {confidence.max().item():.4f}")
+                    # # <<< End Debug Check >>>
 
                     if direction == 'RL':
                         prev_flow = torch.flip(prev_flow, dims=[3])
@@ -160,10 +160,13 @@ class Stereo:
 
                 np.save(os.path.join(output_directory, "occlusion_mask.npy"), occlusion_mask)
                 plt.imsave(os.path.join(output_directory, "occlusion_mask.png"), occlusion_mask)
-                np.save(os.path.join(output_directory, "depth.npy"), depth)
-                cv2.imwrite(os.path.join(output_directory, 'depth.png'), depth)
                 shading = get_shading(depth, self.args.stereo_shading_eps)
                 cv2.imwrite(os.path.join(output_directory, 'shading.png'), shading)
+                np.save(os.path.join(output_directory, "depth.npy"), depth)
+                normalized_depth = cv2.normalize(depth, None, 0, 255, cv2.NORM_MINMAX)
+                depth_image = normalized_depth.astype(np.uint8)
+                depth_colored = cv2.applyColorMap(depth_image, cv2.COLORMAP_JET)
+                cv2.imwrite(os.path.join(output_directory, 'depth.png'), depth_colored)
 
                 if visualize:
                     print(f"baseline: {baseline}")
