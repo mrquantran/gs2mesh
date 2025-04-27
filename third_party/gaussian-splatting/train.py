@@ -3,16 +3,18 @@
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
 #
-# This software is free for non-commercial, research and evaluation use 
+# This software is free for non-commercial, research and evaluation use
 # under the terms of the LICENSE.md file.
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
 
 import os
+import numpy as np
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim
+from guidance.sd_utils import StableDiffusion
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -22,6 +24,8 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.graphics_utils import getWorld2View2
+import copy
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -46,9 +50,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
+    diffusion_loss = None
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
-    for iteration in range(first_iter, opt.iterations + 1):        
+
+    guidance_sd = None
+    if dataset.lambda_diffusion:
+        guidance_sd = StableDiffusion(device="cuda")
+        guidance_sd.get_text_embeds([""], [""])
+        print(f"[INFO] loaded SD!")
+
+    for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -75,13 +87,33 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        viewpoint_idxs = list(np.arange(len(viewpoint_stack)))
+        rand = randint(0, len(viewpoint_stack)-1)
+        viewpoint_cam = viewpoint_stack.pop(rand)
+        viewpoint_idx = viewpoint_idxs.pop(rand)
 
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
+
+        diff_cam = copy.deepcopy(scene.getTrainCameras()[0])
+
+        pick_diff_cam = ((randint(1, 100) <= (args.SDS_freq*100)) and dataset.lambda_diffusion and iteration > (opt.iterations*2/3))
+        if pick_diff_cam:
+            diff_pose = scene.getRandEllipsePose(viewpoint_idx, 0, z_variation=0)
+            diff_cam.world_view_transform = torch.tensor(getWorld2View2(diff_pose[:3, :3].T, diff_pose[:3, 3], diff_cam.trans, diff_cam.scale)).transpose(0, 1).cuda()
+            diff_cam.full_proj_transform = (diff_cam.world_view_transform.unsqueeze(0).bmm(diff_cam.projection_matrix.unsqueeze(0))).squeeze(0)
+            diff_cam.camera_center = diff_cam.world_view_transform.inverse()[3, :3]
+            diff_render_pkg = render(diff_cam, gaussians, pipe, bg)
+            diff_image = diff_render_pkg["render"]
+
+            if False:
+                from matplotlib import pyplot as plt
+                diff_image_np = diff_image.detach().cpu().permute(1, 2, 0).numpy()
+                diff_image_np = np.clip(diff_image_np, 0.0, 1.0)
+                plt.imsave(os.path.join(dataset.source_path, "diffusion_cam_{}.png".format(iteration)), diff_image_np)
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
@@ -90,6 +122,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+        # Diffusion Loss
+        if pick_diff_cam:
+            diffusion_loss = guidance_sd.train_step(diff_image.unsqueeze(0), dataset.step_ratio)
+            loss += dataset.lambda_diffusion * diffusion_loss
+
         loss.backward()
 
         iter_end.record()
@@ -97,14 +135,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         with torch.no_grad():
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
+            losses = [diffusion_loss]
+            names = ["Diffusion"]
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                postfix_dict = {"EMA Loss": f"{ema_loss_for_log:.{7}f}",
+                                          "Total Loss": f"{loss:.{7}f}"}
+
+                for l,n in zip(losses, names):
+                    if l is not None:
+                        postfix_dict[n] = f"{l:.{7}f}"
+                progress_bar.set_postfix(postfix_dict)
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            tr_dict = {names[i]: losses[i] for i in range(len(losses))}
+            training_report(tb_writer, iteration, Ll1, loss, l1_loss, tr_dict, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -118,7 +165,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
                     gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold)
-                
+
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
@@ -131,14 +178,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
-def prepare_output_and_logger(args):    
+def prepare_output_and_logger(args):
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
             unique_str=os.getenv('OAR_JOB_ID')
         else:
             unique_str = str(uuid.uuid4())
         args.model_path = os.path.join("./output/", unique_str[0:10])
-        
+
     # Set up output folder
     print("Output folder: {}".format(args.model_path))
     os.makedirs(args.model_path, exist_ok = True)
@@ -153,8 +200,11 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, tr_dict, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
     if tb_writer:
+        for k,v in tr_dict.items():
+            if v is not None:
+                tb_writer.add_scalar('train_loss_patches/' + k, v.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
@@ -162,7 +212,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
+        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()},
                               {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
 
         for config in validation_configs:
@@ -179,7 +229,7 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
@@ -207,7 +257,7 @@ if __name__ == "__main__":
     parser.add_argument("--start_checkpoint", type=str, default = None)
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
-    
+
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
